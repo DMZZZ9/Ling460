@@ -1,0 +1,109 @@
+---
+title: "data_pre"
+author: "Yuzhou"
+date: "2026-04-01"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#load data and package
+library(tidyverse)
+library(tidytext)
+library(ggplot2)
+library(scales)
+library(tidytext)
+artist <- read.csv("artistDf.csv")
+songs <- read.csv("billboardHot100_1999-2019.csv")
+```
+
+```{r}
+#data-preprocessing and clean
+artist_clean <- artist %>%
+  distinct(Artist, .keep_all = TRUE)
+
+pre_data <- songs %>%
+  inner_join(artist_clean, by = c("Artists" = "Artist"))
+
+final_data <- pre_data %>%
+  filter(Group.Solo == "Solo") %>%
+  mutate(Gender = toupper(trimws(Gender))) %>%
+  filter(Gender %in% c("M", "F")) %>%
+  distinct(Name, Artists, .keep_all = TRUE) %>%
+  mutate(Lyrics = str_replace_all(Lyrics, "\\[.*?\\]", ""), 
+         Lyrics = str_replace_all(Lyrics, "\\n", " "),
+         Lyrics = str_squish(Lyrics)) %>%
+  filter(!is.na(Lyrics), nchar(Lyrics) > 50)
+
+```
+
+
+
+```{r}
+#basic analysis for sample size's percentage
+gender_counts <- final_data %>%
+  count(Gender) %>%
+  mutate(prop = n / sum(n),
+         label = paste0(n, " (", percent(prop, accuracy = 0.1), ")"))
+
+ggplot(gender_counts, aes(x = Gender, y = n, fill = Gender)) +
+  geom_col(width = 0.6, show.legend = FALSE) +
+  geom_text(aes(label = label), vjust = -0.5, size = 5) +
+  theme_minimal(base_size = 14) +
+  labs(title = "Songs by Artist Gender",
+       subtitle = paste("Total sample size: ", nrow(final_data)),
+       x = "Gender",
+       y = "Number of Songs") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15)))
+```
+
+```{r}
+#analysis for lyrics' tfidf
+gender_words <- final_data %>%
+  unnest_tokens(word, Lyrics) %>%
+  anti_join(stop_words) %>% 
+  count(Gender, word, sort = TRUE)
+
+# Calculate tf-idf
+gender_tfidf <- gender_words %>%
+  bind_tf_idf(word, Gender, n) %>%
+  arrange(desc(tf_idf))
+
+female_top <- gender_tfidf %>%
+  filter(Gender == "F") %>%
+  slice_max(tf_idf, n = 15)
+
+male_top <- gender_tfidf %>%
+  filter(Gender == "M") %>%
+  slice_max(tf_idf, n = 15)
+
+print(female_top)
+print(male_top)
+
+plot_tfidf <- bind_rows(female_top, male_top)
+ggplot(plot_tfidf, aes(reorder_within(word, tf_idf, Gender), tf_idf, fill = Gender)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~Gender, scales = "free") +
+  coord_flip() +
+  scale_x_reordered() +
+  labs(title = "Highest TF-IDF Words by Gender",
+       x = NULL, y = "TF-IDF Score") 
+```
+
+
+
+```{r}
+#analysis for lyrics length
+final_data <- final_data %>%
+  mutate(word_count = str_count(Lyrics, "\\w+"))
+
+ggplot(final_data, aes(x = Gender, y = word_count, fill = Gender)) +
+  geom_boxplot() +
+  scale_y_log10() + 
+  theme_minimal() +
+  labs(title = "Lyric Length Distribution by Gender", y = "Word Count (Log Scale)")
+```
+
