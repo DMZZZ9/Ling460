@@ -1,7 +1,7 @@
 ---
-title: "data_pre"
-author: "Yuzhou"
-date: "2026-04-01"
+title: "Exploring Gender Differences in Word Patterns Across Song Lyrics"
+author: "Zihan Zhou, Sitong Liu, Yuzhou Zhou, Feifan Yang"
+date: "2026-04-10"
 output: pdf_document
 ---
 
@@ -9,22 +9,25 @@ output: pdf_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+## Part 1. Load packages and data
+
 ```{r}
-# load data and package
 library(tidyverse)
 library(tidytext)
+library(textdata)
 library(ggplot2)
-library(scales)
-library(tidytext)
 library(e1071)
 library(tm)
 
 artist <- read.csv("artistDf.csv")
 songs <- read.csv("billboardHot100_1999-2019.csv")
+
+dir.create("figures", showWarnings = FALSE)
 ```
 
+## Part 2. Clean and merge the data
+
 ```{r}
-# data-preprocessing and clean
 artist_clean <- artist %>%
   distinct(Artist, .keep_all = TRUE)
 
@@ -41,115 +44,332 @@ final_data <- pre_data %>%
     Lyrics = str_replace_all(Lyrics, "\\n", " "),
     Lyrics = str_squish(Lyrics)
   ) %>%
-  filter(!is.na(Lyrics), nchar(Lyrics) > 50)
+  filter(!is.na(Lyrics), nchar(Lyrics) > 50) %>%
+  mutate(song_id = row_number())
+
+tokens <- final_data %>%
+  unnest_tokens(word, Lyrics)
+
+word_totals <- tokens %>%
+  count(song_id, name = "word_count")
+
+final_data <- final_data %>%
+  left_join(word_totals, by = "song_id")
+
+nrow(final_data)
+
+final_data %>%
+  count(Gender) %>%
+  mutate(prop = n / sum(n))
 ```
 
-
+## Part 3. Corpus summary by gender
 
 ```{r}
-# basic analysis for sample size's percentage
 gender_counts <- final_data %>%
   count(Gender) %>%
   mutate(
     prop = n / sum(n),
-    label = paste0(n, " (", percent(prop, accuracy = 0.1), ")")
+    label = paste0(n, " (", scales::percent(prop, accuracy = 0.1), ")")
   )
 
-ggplot(gender_counts, aes(x = Gender, y = n, fill = Gender)) +
+gender_counts %>%
+  ggplot(aes(x = Gender, y = n, fill = Gender)) +
   geom_col(width = 0.6, show.legend = FALSE) +
   geom_text(aes(label = label), vjust = -0.5, size = 5) +
   theme_minimal(base_size = 14) +
   labs(
     title = "Songs by Artist Gender",
-    subtitle = paste("Total sample size: ", nrow(final_data)),
+    subtitle = paste("Total sample size:", nrow(final_data)),
     x = "Gender",
     y = "Number of Songs"
   ) +
+  scale_fill_manual(values = c("F" = "#d9487d", "M" = "#4472c4")) +
   scale_y_continuous(expand = expansion(mult = c(0, 0.15)))
+
+ggsave("figures/gender_counts.png", plot = last_plot(), width = 7, height = 5, dpi = 200)
+```
+
+## Part 4. NRC emotion words
+
+```{r}
+nrc <- get_sentiments("nrc")
+
+nrc_emotions <- nrc %>%
+  filter(sentiment %in% c("anger", "anticipation", "disgust", "fear", "joy", "sadness", "surprise", "trust"))
+
+emotion_words <- nrc_emotions %>%
+  distinct(word)
+
+emotion_by_song <- tokens %>%
+  inner_join(emotion_words, by = "word") %>%
+  count(song_id, name = "emotion_word_count")
+
+emotion_props <- final_data %>%
+  select(song_id, Gender, word_count) %>%
+  left_join(emotion_by_song, by = "song_id") %>%
+  mutate(emotion_word_count = replace_na(emotion_word_count, 0)) %>%
+  mutate(prop_emotion_words = emotion_word_count / word_count)
+
+emotion_props %>%
+  group_by(Gender) %>%
+  summarise(
+    n = n(),
+    mean_prop = mean(prop_emotion_words),
+    median_prop = median(prop_emotion_words),
+    sd_prop = sd(prop_emotion_words)
+  )
+
+t.test(prop_emotion_words ~ Gender, data = emotion_props)
+wilcox.test(prop_emotion_words ~ Gender, data = emotion_props)
+```
+
+## Part 5. NRC categories by gender
+
+```{r}
+emotion_summary <- tokens %>%
+  inner_join(nrc_emotions, by = "word") %>%
+  count(song_id, Gender, sentiment, name = "n") %>%
+  left_join(word_totals, by = "song_id") %>%
+  mutate(prop = n / word_count) %>%
+  group_by(Gender, sentiment) %>%
+  summarise(mean_prop = mean(prop))
+
+emotion_summary
+
+emotion_summary %>%
+  ggplot(aes(sentiment, mean_prop, fill = Gender)) +
+  geom_col(position = "dodge") +
+  coord_flip() +
+  theme_minimal(base_size = 13) +
+  labs(
+    title = "Average NRC Emotion-Word Proportion by Gender",
+    x = "Emotion category",
+    y = "Mean proportion of lyric tokens"
+  ) +
+  scale_fill_manual(values = c("F" = "#d9487d", "M" = "#4472c4"))
+
+ggsave("figures/emotion_by_gender.png", plot = last_plot(), width = 8, height = 5.5, dpi = 200)
 ```
 
 ```{r}
-# analysis for lyrics' tfidf
-gender_words <- final_data %>%
-  unnest_tokens(word, Lyrics) %>%
-  anti_join(stop_words) %>%
+joy_scores <- final_data %>%
+  select(song_id, Gender, word_count) %>%
+  left_join(
+    tokens %>%
+      inner_join(filter(nrc, sentiment == "joy"), by = "word") %>%
+      count(song_id, Gender, name = "n") %>%
+      left_join(word_totals, by = "song_id") %>%
+      mutate(prop = n / word_count),
+    by = c("song_id", "Gender", "word_count")
+  ) %>%
+  mutate(n = replace_na(n, 0)) %>%
+  mutate(prop = replace_na(prop, 0))
+
+joy_scores %>%
+  group_by(Gender) %>%
+  summarise(mean_prop = mean(prop), median_prop = median(prop))
+
+t.test(prop ~ Gender, data = joy_scores)
+```
+
+```{r}
+anger_scores <- final_data %>%
+  select(song_id, Gender, word_count) %>%
+  left_join(
+    tokens %>%
+      inner_join(filter(nrc, sentiment == "anger"), by = "word") %>%
+      count(song_id, Gender, name = "n") %>%
+      left_join(word_totals, by = "song_id") %>%
+      mutate(prop = n / word_count),
+    by = c("song_id", "Gender", "word_count")
+  ) %>%
+  mutate(n = replace_na(n, 0)) %>%
+  mutate(prop = replace_na(prop, 0))
+
+anger_scores %>%
+  group_by(Gender) %>%
+  summarise(mean_prop = mean(prop), median_prop = median(prop))
+
+t.test(prop ~ Gender, data = anger_scores)
+```
+
+```{r}
+fear_scores <- final_data %>%
+  select(song_id, Gender, word_count) %>%
+  left_join(
+    tokens %>%
+      inner_join(filter(nrc, sentiment == "fear"), by = "word") %>%
+      count(song_id, Gender, name = "n") %>%
+      left_join(word_totals, by = "song_id") %>%
+      mutate(prop = n / word_count),
+    by = c("song_id", "Gender", "word_count")
+  ) %>%
+  mutate(n = replace_na(n, 0)) %>%
+  mutate(prop = replace_na(prop, 0))
+
+fear_scores %>%
+  group_by(Gender) %>%
+  summarise(mean_prop = mean(prop), median_prop = median(prop))
+
+t.test(prop ~ Gender, data = fear_scores)
+```
+
+## Part 6. Bing positive and negative words
+
+```{r}
+bing <- get_sentiments("bing")
+
+positive_scores <- final_data %>%
+  select(song_id, Gender, word_count) %>%
+  left_join(
+    tokens %>%
+      inner_join(filter(bing, sentiment == "positive"), by = "word") %>%
+      count(song_id, Gender, name = "n") %>%
+      left_join(word_totals, by = "song_id") %>%
+      mutate(prop = n / word_count),
+    by = c("song_id", "Gender", "word_count")
+  ) %>%
+  mutate(n = replace_na(n, 0)) %>%
+  mutate(prop = replace_na(prop, 0))
+
+positive_scores %>%
+  group_by(Gender) %>%
+  summarise(mean_prop = mean(prop), median_prop = median(prop))
+
+t.test(prop ~ Gender, data = positive_scores)
+```
+
+```{r}
+negative_scores <- final_data %>%
+  select(song_id, Gender, word_count) %>%
+  left_join(
+    tokens %>%
+      inner_join(filter(bing, sentiment == "negative"), by = "word") %>%
+      count(song_id, Gender, name = "n") %>%
+      left_join(word_totals, by = "song_id") %>%
+      mutate(prop = n / word_count),
+    by = c("song_id", "Gender", "word_count")
+  ) %>%
+  mutate(n = replace_na(n, 0)) %>%
+  mutate(prop = replace_na(prop, 0))
+
+negative_scores %>%
+  group_by(Gender) %>%
+  summarise(mean_prop = mean(prop), median_prop = median(prop))
+
+t.test(prop ~ Gender, data = negative_scores)
+```
+
+## Part 7. Tf-idf
+
+```{r}
+gender_words <- tokens %>%
+  anti_join(stop_words, by = "word") %>%
   count(Gender, word, sort = TRUE)
 
-# calculate tf-idf
 gender_tfidf <- gender_words %>%
   bind_tf_idf(word, Gender, n) %>%
   arrange(desc(tf_idf))
 
 female_top <- gender_tfidf %>%
   filter(Gender == "F") %>%
-  slice_max(tf_idf, n = 15)
+  slice_max(tf_idf, n = 12)
 
 male_top <- gender_tfidf %>%
   filter(Gender == "M") %>%
-  slice_max(tf_idf, n = 15)
+  slice_max(tf_idf, n = 12)
 
-print(female_top)
-print(male_top)
+female_top
+male_top
 
-plot_tfidf <- bind_rows(female_top, male_top)
-ggplot(plot_tfidf, aes(reorder_within(word, tf_idf, Gender), tf_idf, fill = Gender)) +
+bind_rows(female_top, male_top) %>%
+  ggplot(aes(reorder_within(word, tf_idf, Gender), tf_idf, fill = Gender)) +
   geom_col(show.legend = FALSE) +
   facet_wrap(~Gender, scales = "free") +
   coord_flip() +
   scale_x_reordered() +
+  theme_minimal(base_size = 12) +
   labs(
     title = "Highest TF-IDF Words by Gender",
-    x = NULL, y = "TF-IDF Score"
-  )
+    x = NULL,
+    y = "TF-IDF score"
+  ) +
+  scale_fill_manual(values = c("F" = "#d9487d", "M" = "#4472c4"))
+
+ggsave("figures/tfidf_by_gender.png", plot = last_plot(), width = 9, height = 5.5, dpi = 200)
 ```
 
-
+## Part 8. Lyric length
 
 ```{r}
-# analysis for lyrics length
-final_data <- final_data %>%
-  mutate(word_count = str_count(Lyrics, "\\w+"))
-
 ggplot(final_data, aes(x = Gender, y = word_count, fill = Gender)) +
   geom_boxplot() +
   scale_y_log10() +
   theme_minimal() +
-  labs(title = "Lyric Length Distribution by Gender", y = "Word Count (Log Scale)")
+  labs(title = "Lyric Length Distribution by Gender", y = "Word Count (Log Scale)") +
+  scale_fill_manual(values = c("F" = "#d9487d", "M" = "#4472c4")) +
+  theme(legend.position = "none")
+
+ggsave("figures/lyric_length_boxplot.png", plot = last_plot(), width = 7, height = 5, dpi = 200)
+
+final_data %>%
+  group_by(Gender) %>%
+  summarise(
+    n = n(),
+    mean = mean(word_count),
+    median = median(word_count),
+    sd = sd(word_count)
+  )
+
+wilcox.test(word_count ~ Gender, data = final_data)
+t.test(log10(word_count) ~ Gender, data = final_data)
 ```
 
+## Part 9. Naive Bayes
+
 ```{r}
-# create dtm
 songs_dtm <- final_data %>%
-  mutate(song_id = row_number()) %>%
-  mutate(Gender = factor(Gender)) %>%
   unnest_tokens(word, Lyrics) %>%
-  cast_dtm(song_id, word, word_count) %>%
-  removeSparseTerms(0.99) %>%
-  as.matrix()
+  anti_join(stop_words, by = "word") %>%
+  count(song_id, word) %>%
+  cast_dtm(song_id, word, n)
+
+songs_dtm <- songs_dtm %>%
+  weightBin()
+
+DTM <- removeSparseTerms(songs_dtm, 0.99)
+DTM_matrix <- as.matrix(DTM)
 ```
 
 ```{r}
-# build naive bayes model
-n <- nrow(final_data)
-training_idxs <- sample(1:n, round(0.75 * n))
+n <- nrow(DTM_matrix)
+training_idxs <- sample(1:n, round(n * 0.75))
 testing_idxs <- c(1:n)[-training_idxs]
 
-training_set <- songs_dtm[training_idxs, ]
-testing_set <- songs_dtm[testing_idxs, ]
+training_set <- DTM_matrix[training_idxs, ]
+testing_set <- DTM_matrix[testing_idxs, ]
 
-training_labels <- final_data[training_idxs, ]$Gender
-testing_labels <- final_data[testing_idxs, ]$Gender
+labels <- final_data %>%
+  filter(song_id %in% as.integer(rownames(DTM_matrix))) %>%
+  arrange(match(song_id, as.integer(rownames(DTM_matrix))))
 
+training_labels <- labels[training_idxs, ]$Gender
+testing_labels <- labels[testing_idxs, ]$Gender
+```
+
+```{r}
 naive_bayes <- naiveBayes(training_set, training_labels)
 prediction <- predict(naive_bayes, testing_set, type = "class")
 
-table <- table(prediction, testing_labels)
+confusion_matrix <- table(prediction, testing_labels)
+confusion_matrix
 
 evaluate <- function(cm) {
-  TN <- cm[1, 1] # true negatives
-  FN <- cm[1, 2] # false negtives
-  FP <- cm[2, 1] # false positives
-  TP <- cm[2, 2] # fals negatives
+  TN <- cm[1, 1]
+  FN <- cm[1, 2]
+  FP <- cm[2, 1]
+  TP <- cm[2, 2]
 
   accuracy <- (TP + TN) / sum(cm)
   precision <- TP / (TP + FP)
@@ -164,14 +384,17 @@ evaluate <- function(cm) {
   )
 }
 
-evaluate(table)
+evaluate(confusion_matrix)
+
+majority_class_accuracy <- max(prop.table(table(testing_labels)))
+majority_class_accuracy
 ```
 
-```{r}
-# top predictive words for male/female singers
-bayes_prob <- predict(naive_bayes, testing_set, type = "raw")
-scores <- sapply(naive_bayes$tables, function(x) log(x[2, 1] / x[1, 1]))
+## Part 10. Top predictive words
 
-sort(scores, decreasing = TRUE)[1:20]
-sort(scores, decreasing = FALSE)[1:20]
+```{r}
+scores <- sapply(naive_bayes$tables, function(x) log((x[2, 2] + 1e-06) / (x[1, 2] + 1e-06)))
+
+sort(scores, decreasing = TRUE)[1:15]
+sort(scores, decreasing = FALSE)[1:15]
 ```
