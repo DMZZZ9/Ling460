@@ -25,7 +25,7 @@ songs <- read.csv("billboardHot100_1999-2019.csv")
 dir.create("figures", showWarnings = FALSE)
 ```
 
-## data cleaning and preprocessing
+## data cleaning and preprocessing (authorship: Yuzhou)
 
 ```{r}
 artist_clean <- artist %>%
@@ -72,7 +72,7 @@ song_counts
 artist_counts
 ```
 
-## songs by gender
+## songs by gender (authorship: Yuzhou)
 
 ```{r}
 gender_counts <- song_counts %>%
@@ -95,7 +95,7 @@ gender_counts %>%
 ggsave("figures/gender_counts.png", plot = last_plot(), width = 7, height = 5, dpi = 200)
 ```
 
-## overall nrc emotion words
+## overall nrc emotion words (authorship: Yuzhou)
 
 ```{r}
 nrc <- get_sentiments("nrc")
@@ -132,7 +132,7 @@ t.test(prop_emotion_words ~ Gender, data = emotion_props)
 wilcox.test(prop_emotion_words ~ Gender, data = emotion_props)
 ```
 
-## nrc categories by song
+## nrc categories by song (authorship: Zihan)
 
 ```{r}
 # match every song and every NRC emotion category
@@ -173,7 +173,7 @@ plot_song
 ggsave("figures/emotion_by_gender_song.png", plot = plot_song, width = 8, height = 5.5, dpi = 200)
 ```
 
-## nrc categories by artist
+## nrc categories by artist (authorship: Zihan)
 
 ```{r}
 # average across songs
@@ -203,7 +203,7 @@ plot_artist
 ggsave("figures/emotion_by_gender_artist.png", plot = plot_artist, width = 8, height = 5.5, dpi = 200)
 ```
 
-## t tests for nrc categories
+## t tests for nrc categories (authorship: Sitong)
 
 ```{r}
 joy_song <- emotion_category_song %>% filter(sentiment == "joy")
@@ -241,7 +241,7 @@ t.test(prop ~ Gender, data = fear_artist)
 t.test(prop ~ Gender, data = sadness_artist)
 ```
 
-## bing words
+## bing words (authorship: Sitong)
 
 ```{r}
 bing <- get_sentiments("bing")
@@ -274,7 +274,7 @@ t.test(prop ~ Gender, data = positive_song)
 t.test(prop ~ Gender, data = negative_song)
 ```
 
-## lyric length
+## lyric length (authorship: Feifan)
 
 ```{r}
 # plot on a log scale
@@ -302,7 +302,7 @@ wilcox.test(word_count ~ Gender, data = final_data)
 t.test(log10(word_count) ~ Gender, data = final_data)
 ```
 
-## naive bayes
+## naive bayes (authorship: Feifan)
 
 ```{r}
 set.seed(460)
@@ -378,7 +378,7 @@ evaluate(baseline_matrix, "M")
 evaluate(baseline_matrix, "F")
 ```
 
-## balanced naive bayes
+## balanced naive bayes (authorship: Feifan)
 
 ```{r}
 set.seed(460)
